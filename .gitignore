@@ -1,0 +1,16 @@
+# Dependency directories
+node_modules/
+vendor/
+
+# Build outputs
+dist/
+build/
+*.exe
+*.o
+
+# Environment secrets
+.env
+
+# OS-specific files
+.DS_Store
+Thumbs.db

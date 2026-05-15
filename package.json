@@ -1,0 +1,39 @@
+{
+  "name": "kmec_lms_backend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "build": "echo \"No build step\"",
+    "db:sync": "node src/scripts/syncDatabase.js",
+    "db:seed": "node src/scripts/seedDatabase.js",
+    "seed:books":  "node src/scripts/seedBooks.js",
+    "seed:trans":  "node src/scripts/seedTransactions.js",
+    "seed:users":  "node src/scripts/seedUserActivities.js",
+    "test": "echo \"No test suite configured\" && exit 0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "axios": "^1.13.5",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "dotenv": "^17.2.4",
+    "express": "^5.2.1",
+    "express-validator": "^7.3.1",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.3",
+    "mysql2": "^3.16.3",
+    "sequelize": "^6.37.7"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.11"
+  }
+}
