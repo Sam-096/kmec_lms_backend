@@ -3,6 +3,10 @@
 const ollamaService = require('../services/ollamaService');
 const { sequelize }  = require('../config/database');
 const { QueryTypes } = require('sequelize');
+const {
+  buildStudentSystemPrompt,
+  buildAdminSystemPrompt,
+} = require('../utils/prompts');
 
 
 // ═══════════════════════════════════════════════════════════
@@ -851,62 +855,6 @@ function classifyIntent(message, role) {
 
 
 // ═══════════════════════════════════════════════════════════
-//  OLLAMA PROMPT BUILDERS  (last-resort fallback only)
-// ═══════════════════════════════════════════════════════════
-
-async function buildStudentSystemPrompt(user, message) {
-  const keyword = safeKw(message)
-    .split(' ')
-    .filter((w) => w.length > 3)
-    .slice(0, 3)
-    .join('%') || 'a';
-
-  const relevantBooks = await sequelize.query(
-    `SELECT title, author, category, availableCopies
-     FROM books
-     WHERE (title LIKE :kw OR category LIKE :kw OR tags LIKE :kw)
-       AND availableCopies > 0
-     LIMIT 8`,
-    { replacements: { kw: `%${keyword}%` }, type: QueryTypes.SELECT }
-  );
-
-  const bookSection =
-    relevantBooks.length > 0
-      ? `Catalogue books matching query:\n${relevantBooks
-          .map((b) => `• "${b.title}" by ${b.author} [${b.category}] — ${b.availableCopies} copy/copies`)
-          .join('\n')}`
-      : 'No matching books found.';
-
-  return (
-    `You are KMEC Library Assistant helping student "${user.name}".\n` +
-    `Outstanding fine: ${inr(user.fineOwed)}\n\n` +
-    `${bookSection}\n\n` +
-    `STRICT RULES — follow all of these:\n` +
-    `1. NEVER say "I can't", "I'm not able to", or "I don't have access". Always answer directly.\n` +
-    `2. Only recommend books from the list above.\n` +
-    `3. Use ₹ for money. Be friendly. Reply under 80 words.\n` +
-    `4. If truly unsure, say: "Please visit the library counter for more details."`
-  );
-}
-
-async function buildAdminSystemPrompt(user) {
-  const [stats] = await sequelize.query(
-    `SELECT
-       (SELECT COUNT(*) FROM transactions WHERE status IN ('active','overdue')) AS activeLoans,
-       (SELECT COUNT(*) FROM books)                                              AS totalBooks,
-       (SELECT COUNT(*) FROM users WHERE role = 'student')                      AS totalStudents
-     FROM DUAL`,
-    { type: QueryTypes.SELECT }
-  );
-  return (
-    `You are a library management assistant for admin "${user.name}" at KMEC Library.\n` +
-    `Stats: ${stats.totalBooks} books, ${stats.totalStudents} students, ${stats.activeLoans} active loans.\n\n` +
-    `Be professional, concise (under 80 words). Never refuse a reasonable management question.`
-  );
-}
-
-
-// ═══════════════════════════════════════════════════════════
 //  EXPORTED CONTROLLERS
 // ═══════════════════════════════════════════════════════════
 
@@ -924,7 +872,7 @@ exports.chat = async (req, res) => {
     }
 
     const [user] = await sequelize.query(
-      `SELECT name, role, fineOwed FROM users WHERE id = :userId`,
+      `SELECT id, name, role, fineOwed FROM users WHERE id = :userId`,
       { replacements: { userId }, type: QueryTypes.SELECT }
     );
 
@@ -963,21 +911,38 @@ exports.chat = async (req, res) => {
       });
     }
 
-    const systemPrompt =
-      userRole === 'admin'
-        ? await buildAdminSystemPrompt(user)
-        : await buildStudentSystemPrompt(user, message);
+    try {
+      const systemPrompt =
+        userRole === 'admin'
+          ? await buildAdminSystemPrompt(user)
+          : await buildStudentSystemPrompt(user, message);
 
-    const reply = await ollamaService.chat([
-      { role: 'system', content: systemPrompt },
-      ...history.slice(-4),
-      { role: 'user', content: message },
-    ]);
+      const reply = await ollamaService.chat([
+        { role: 'system', content: systemPrompt },
+        ...history.slice(-4),
+        { role: 'user', content: message },
+      ]);
 
-    return res.json({ success: true, data: { reply, source: 'ollama' } });
+      return res.json({ success: true, data: { reply, source: 'ollama' } });
+    } catch (aiErr) {
+      // Don't 500 on AI failure — degrade gracefully so the UI stays usable.
+      console.error('[AI Chat Ollama Error]', aiErr.message);
+      return res.json({
+        success: true,
+        data: {
+          reply:
+            `I couldn't reach the AI just now, but I can still help with:\n` +
+            `• Your fines & due dates\n` +
+            `• Books you've borrowed\n` +
+            `• Availability, renewals, summaries, citations\n\n` +
+            `Try one of those.`,
+          source: 'fallback',
+        },
+      });
+    }
 
   } catch (error) {
-    console.error('[AI Chat Error]', error.message);
+    console.error('[AI Chat Error]', error.message, error.stack);
     return res.status(500).json({ success: false, message: 'Internal server error.' });
   }
 };

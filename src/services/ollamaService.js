@@ -1,83 +1,60 @@
-// Groq-backed AI service.
-//
-// File name is preserved (`ollamaService.js`) so existing controllers that
-// `require('../services/ollamaService')` keep working with zero diff.
-// Exports the same surface: generate, chat, isAvailable.
-//
-// Env vars:
-//   GROQ_API_KEY  (required)
-//   GROQ_MODEL    (optional, defaults to 'llama-3.3-70b-versatile')
+const axios = require("axios");
 
-const axios = require('axios');
+const OLLAMA_URL = process.env.OLLAMA_URL || "http://localhost:11434";
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "llama3.2";
 
-const GROQ_URL   = 'https://api.groq.com/openai/v1/chat/completions';
-const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
-
-const getKey = () => process.env.GROQ_API_KEY;
-
-const buildHeaders = () => ({
-  Authorization: `Bearer ${getKey()}`,
-  'Content-Type': 'application/json',
-});
-
-// Mirrors Ollama's `num_predict`/`num_ctx` intent — keep responses tight & fast.
-const DEFAULTS = {
-  temperature: 0.7,
-  top_p:       0.9,
-  max_tokens:  300,
-};
-
-async function generate(prompt, systemPrompt = '') {
-  if (!getKey()) throw new Error('GROQ_API_KEY is not configured');
-
-  const messages = [];
-  if (systemPrompt && systemPrompt.trim()) {
-    messages.push({ role: 'system', content: systemPrompt });
-  }
-  messages.push({ role: 'user', content: prompt });
-
+// ── Core text generation ───────────────────────────────────
+async function generate(prompt, systemPrompt = "") {
   const response = await axios.post(
-    GROQ_URL,
-    { model: GROQ_MODEL, messages, ...DEFAULTS, stream: false },
-    { timeout: 30000, headers: buildHeaders() }
-  );
-
-  return response?.data?.choices?.[0]?.message?.content ?? '';
-}
-
-async function chat(messages) {
-  if (!getKey()) throw new Error('GROQ_API_KEY is not configured');
-  if (!Array.isArray(messages) || messages.length === 0) {
-    throw new Error('chat() requires a non-empty messages array');
-  }
-
-  const response = await axios.post(
-    GROQ_URL,
-    { model: GROQ_MODEL, messages, ...DEFAULTS, stream: false },
-    { timeout: 30000, headers: buildHeaders() }
-  );
-
-  return response?.data?.choices?.[0]?.message?.content ?? '';
-}
-
-async function isAvailable() {
-  if (!getKey()) return false;
-  try {
-    // Lightweight ping — tiny payload, short timeout.
-    await axios.post(
-      GROQ_URL,
-      {
-        model: GROQ_MODEL,
-        messages: [{ role: 'user', content: 'ping' }],
-        max_tokens: 1,
-        stream: false,
+    `${OLLAMA_URL}/api/generate`,
+    {
+      model: OLLAMA_MODEL,
+      prompt,
+      system: systemPrompt,
+      stream: false,
+      options: {
+        temperature: 0.7,
+        top_p: 0.9,
+        num_predict: 150, // limit output tokens → faster
+        num_ctx: 1024, // smaller context window → faster
+        repeat_penalty: 1.1,
       },
-      { timeout: 5000, headers: buildHeaders() }
-    );
+    },
+    { timeout: 30000 },
+  );
+
+  return response.data.response;
+}
+
+// ── Chat with message history ──────────────────────────────
+async function chat(messages) {
+  const response = await axios.post(
+    `${OLLAMA_URL}/api/chat`,
+    {
+      model: OLLAMA_MODEL,
+      messages,
+      stream: false,
+      options: {
+        temperature: 0.7,
+        num_predict: 150,
+        num_ctx: 1024,
+      },
+    },
+    { timeout: 30000 },
+  );
+
+  return response.data.message.content;
+}
+
+// ── Health check ───────────────────────────────────────────
+async function isAvailable() {
+  try {
+    await axios.get(`${OLLAMA_URL}/api/tags`, { timeout: 3000 });
     return true;
   } catch {
     return false;
   }
 }
 
+// ✅ Named exports — must match what aiController imports
 module.exports = { generate, chat, isAvailable };
